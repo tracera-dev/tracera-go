@@ -76,3 +76,7 @@ Usual case: one process, one test run — nothing extra to set. Ginkgo parallel 
 Only when **you** start several OS processes and want them in the **same** run: give each a different `TRACERA_PEER_WORKER` for that launch. The first process opens the run; the last closes it. You do not create the run by hand.
 
 Environment variables and `.env` lookup: [Autotest adapters](https://tracera.dev/docs/adapters).
+
+## License
+
+Apache-2.0. Copyright 2026 Tracera.
