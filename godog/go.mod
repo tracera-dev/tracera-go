@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/cucumber/godog v0.16.0
 	github.com/cucumber/messages/go/v34 v34.2.0
-	github.com/tracera-dev/tracera-go v1.1.0
+	github.com/tracera-dev/tracera-go v1.2.0
 )
 
 require (

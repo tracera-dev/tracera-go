@@ -10,9 +10,6 @@ package tracera
 
 import "github.com/tracera-dev/tracera-go/internal/core"
 
-// TestContext is the active test pin.
-type TestContext = core.TestContext
-
 // AttachmentMeta references an uploaded blob on a step or on the result.
 type AttachmentMeta = core.AttachmentMeta
 
@@ -61,9 +58,11 @@ func AttachmentBytes(fileName string, data []byte, mimeType ...string) {
 
 // GetContext captures the active pin so a worker goroutine can report into
 // the same test. Returns nil outside a reported test.
-func GetContext() *TestContext { return core.GetContext() }
+func GetContext() *TestContext { return wrapPin(core.GetContext()) }
 
 // RunWithContext pins ctx while fn runs on the current goroutine. Goroutines
 // do not inherit the pin — capture GetContext first, then wrap the worker
 // body with this.
-func RunWithContext(ctx *TestContext, fn func()) { core.RunWithContext(ctx, fn) }
+func RunWithContext(ctx *TestContext, fn func()) {
+	core.RunWithContext(unwrapPin(ctx), fn)
+}

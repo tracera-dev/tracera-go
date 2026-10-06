@@ -9,9 +9,9 @@ import (
 
 // ReporterState is the per-process reporting lifecycle a runner drives.
 type ReporterState struct {
-	Session      *Session
-	Buffer       *ResultBuffer
-	UploadPool   *JobPool
+	session      *Session
+	buffer       *ResultBuffer
+	uploadPool   *JobPool
 	SoftDisabled bool
 
 	// PeerWorker opts this process into the shared run-id handoff when the
@@ -103,10 +103,10 @@ func BeginReporting(state *ReporterState) {
 		owned = true
 	}
 
-	state.Session = NewSession(client, config, testRunID, owned, peerHandoff)
-	state.Session.PeerFinisher = peerHandoff && state.PeerFinisher
-	state.Buffer = NewResultBuffer(state.Session)
-	state.UploadPool = NewJobPool(config.UploadConcurrency)
+	state.session = NewSession(client, config, testRunID, owned, peerHandoff)
+	state.session.PeerFinisher = peerHandoff && state.PeerFinisher
+	state.buffer = NewResultBuffer(state.session)
+	state.uploadPool = NewJobPool(config.UploadConcurrency)
 	if owned {
 		LogDebug("Tracera: created test run #%d", testRunID)
 	} else {
@@ -125,14 +125,14 @@ func EnqueueResult(state *ReporterState, item *PendingResult) {
 		payload := SnapshotPayload(item.Ctx)
 		item.Payload = &payload
 	}
-	if state == nil || state.SoftDisabled || state.Session == nil || state.Buffer == nil ||
+	if state == nil || state.SoftDisabled || state.session == nil || state.buffer == nil ||
 		item.Ctx.TestCaseID() <= 0 {
 		// Never reported: drop the blob bodies the attachments registered.
 		DiscardPendingBlobs(item.Payload)
 		return
 	}
 
-	session, buffer := state.Session, state.Buffer
+	session, buffer := state.session, state.buffer
 	report := func() {
 		if !session.ReportingEnabled() {
 			DiscardPendingBlobs(item.Payload)
@@ -143,11 +143,11 @@ func EnqueueResult(state *ReporterState, item *PendingResult) {
 		}
 		buffer.Enqueue(item)
 	}
-	if state.UploadPool == nil {
+	if state.uploadPool == nil {
 		report()
 		return
 	}
-	state.UploadPool.Enqueue(report)
+	state.uploadPool.Enqueue(report)
 }
 
 // resolveResultAttachments uploads the pending attachment slots on payload. It
@@ -171,13 +171,13 @@ func resolveResultAttachments(session *Session, payload *Payload) bool {
 // without closing the run. Runners whose peer processes have no end-of-suite
 // hook call it after each test; it must not overlap a running test.
 func FlushResults(state *ReporterState) {
-	if state.SoftDisabled || state.Session == nil || state.Buffer == nil {
+	if state.SoftDisabled || state.session == nil || state.buffer == nil {
 		return
 	}
-	if state.UploadPool != nil {
-		state.UploadPool.Drain()
+	if state.uploadPool != nil {
+		state.uploadPool.Drain()
 	}
-	state.Buffer.Flush()
+	state.buffer.Flush()
 }
 
 // finishSharedRun closes a run this process does not own, with the same error
@@ -192,15 +192,15 @@ func finishSharedRun(session *Session) {
 
 // EndReporting drains uploads, flushes results and closes the run.
 func EndReporting(state *ReporterState) {
-	if state.SoftDisabled || state.Session == nil || state.Buffer == nil {
+	if state.SoftDisabled || state.session == nil || state.buffer == nil {
 		return
 	}
 	FlushResults(state)
 	// Blobs still registered here belong to results nobody reported.
 	ClearPendingBlobs()
 
-	session := state.Session
-	left := state.Buffer.PendingCount() + session.UnsentResults()
+	session := state.session
+	left := state.buffer.PendingCount() + session.UnsentResults()
 	switch {
 	case left > 0:
 		LogError("Tracera: %d result(s) not uploaded — leaving test run open", left)

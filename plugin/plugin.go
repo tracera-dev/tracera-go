@@ -111,11 +111,10 @@ func ResetForRetry(ctx *TestContext) { core.ResetForRetry(ctx) }
 // duplicated first line).
 func FormatFailureText(err any) string { return core.FormatFailureText(err) }
 
-// PayloadHasStepError reports whether a step already carries the failure, so
-// fail text stays XOR between step and result.
+// PayloadHasStepError reports whether any step carries errorMessage (O(1) sticky flag).
 func PayloadHasStepError(p Payload) bool { return core.PayloadHasStepError(p) }
 
-// PayloadHasFailedStep reports whether any step finished Failed.
+// PayloadHasFailedStep reports whether any step finished Failed (O(1) sticky flag).
 func PayloadHasFailedStep(p Payload) bool { return core.PayloadHasFailedStep(p) }
 
 // DurationMinutesFromMs converts wall-clock ms to durationMinutes (one

@@ -66,6 +66,10 @@ type TestContext struct {
 	roots             map[StepSection][]*stepNode
 	resultAttachments []map[string]any
 	nextStepID        int
+	// Sticky: any step marked Failed (O(1) for PayloadHasFailedStep on Passed).
+	hasFailedStep bool
+	// Sticky: any step with non-empty errorMessage (O(1) fail-text XOR; soft error ≠ Failed).
+	hasStepError bool
 }
 
 // CreateTestContext builds an unbound-or-bound context for one test.
@@ -278,12 +282,16 @@ func (h *StepHandle) Fail(err any) {
 	h.ctx.mu.Lock()
 	defer h.ctx.mu.Unlock()
 	h.node.result = "Failed"
+	h.ctx.hasFailedStep = true
 	for _, child := range h.node.children {
 		if child.errorMessage != "" {
 			return
 		}
 	}
 	h.node.errorMessage = AppendText(h.node.errorMessage, FormatFailureText(err))
+	if h.node.errorMessage != "" {
+		h.ctx.hasStepError = true
+	}
 }
 
 // Discard drops an open step from the tree. Runners use it for steps the
@@ -419,6 +427,9 @@ func Error(text string) {
 	defer ctx.mu.Unlock()
 	if cur := ctx.currentStep(); cur != nil {
 		cur.errorMessage = AppendText(cur.errorMessage, text)
+		if cur.errorMessage != "" {
+			ctx.hasStepError = true
+		}
 		return
 	}
 	ctx.resultError = AppendText(ctx.resultError, text)
@@ -501,12 +512,14 @@ type StepJSON struct {
 
 // Payload is the customer-visible snapshot of one test result.
 type Payload struct {
-	Setup        []StepJSON
-	Test         []StepJSON
-	Teardown     []StepJSON
-	Attachments  []map[string]any
-	ErrorMessage string
-	Comment      string
+	Setup         []StepJSON
+	Test          []StepJSON
+	Teardown      []StepJSON
+	Attachments   []map[string]any
+	ErrorMessage  string
+	Comment       string
+	HasFailedStep bool
+	HasStepError  bool
 }
 
 func nilable(s string) *string {
@@ -556,38 +569,25 @@ func SnapshotPayload(ctx *TestContext) Payload {
 		attachments = []map[string]any{}
 	}
 	return Payload{
-		Setup:        flattenSteps(ctx.roots[SectionSetup]),
-		Test:         flattenSteps(ctx.roots[SectionTest]),
-		Teardown:     flattenSteps(ctx.roots[SectionTeardown]),
-		Attachments:  attachments,
-		ErrorMessage: ctx.resultError,
-		Comment:      ctx.resultComment,
+		Setup:         flattenSteps(ctx.roots[SectionSetup]),
+		Test:          flattenSteps(ctx.roots[SectionTest]),
+		Teardown:      flattenSteps(ctx.roots[SectionTeardown]),
+		Attachments:   attachments,
+		ErrorMessage:  ctx.resultError,
+		Comment:       ctx.resultComment,
+		HasFailedStep: ctx.hasFailedStep,
+		HasStepError:  ctx.hasStepError,
 	}
 }
 
-// PayloadHasStepError reports whether any step already carries the failure, so
-// runners keep fail text XOR between step and result.
+// PayloadHasStepError reports whether any step carries errorMessage (O(1) sticky flag).
 func PayloadHasStepError(p Payload) bool {
-	for _, group := range [][]StepJSON{p.Setup, p.Test, p.Teardown} {
-		for _, s := range group {
-			if s.ErrorMessage != nil && *s.ErrorMessage != "" {
-				return true
-			}
-		}
-	}
-	return false
+	return p.HasStepError
 }
 
-// PayloadHasFailedStep reports whether any step finished Failed.
+// PayloadHasFailedStep reports whether any step finished Failed (O(1) sticky flag).
 func PayloadHasFailedStep(p Payload) bool {
-	for _, group := range [][]StepJSON{p.Setup, p.Test, p.Teardown} {
-		for _, s := range group {
-			if s.Result == "Failed" {
-				return true
-			}
-		}
-	}
-	return false
+	return p.HasFailedStep
 }
 
 // RecordFailure puts fail text on the open step, else on the result.
@@ -603,7 +603,11 @@ func RecordFailure(ctx *TestContext, err any) {
 	defer ctx.mu.Unlock()
 	if cur := ctx.currentStep(); cur != nil {
 		cur.result = "Failed"
+		ctx.hasFailedStep = true
 		cur.errorMessage = AppendText(cur.errorMessage, msg)
+		if cur.errorMessage != "" {
+			ctx.hasStepError = true
+		}
 		return
 	}
 	ctx.resultError = AppendText(ctx.resultError, msg)
@@ -663,6 +667,8 @@ func (c *TestContext) clearStepTreesLocked() {
 	}
 	c.stepStack = nil
 	c.roots = map[StepSection][]*stepNode{SectionSetup: nil, SectionTest: nil, SectionTeardown: nil}
+	c.hasFailedStep = false
+	c.hasStepError = false
 }
 
 // TestCase binds the active context to a Tracera test case id, with an
