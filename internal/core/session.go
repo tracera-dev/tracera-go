@@ -125,8 +125,17 @@ func EnqueueResult(state *ReporterState, item *PendingResult) {
 		payload := SnapshotPayload(item.Ctx)
 		item.Payload = &payload
 	}
-	if state == nil || state.SoftDisabled || state.session == nil || state.buffer == nil ||
-		item.Ctx.TestCaseID() <= 0 {
+	if item.Ctx.TestCaseID() <= 0 {
+		// Visible only at debug (PRODUCT / adapters Callout).
+		label := strings.TrimSpace(item.Ctx.AutotestName())
+		if label == "" {
+			label = "unbound"
+		}
+		LogDebug("Tracera: skip report — no testCaseId (%s)", label)
+		DiscardPendingBlobs(item.Payload)
+		return
+	}
+	if state == nil || state.SoftDisabled || state.session == nil || state.buffer == nil {
 		// Never reported: drop the blob bodies the attachments registered.
 		DiscardPendingBlobs(item.Payload)
 		return

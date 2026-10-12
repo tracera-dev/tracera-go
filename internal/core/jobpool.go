@@ -19,15 +19,19 @@ func NewJobPool(concurrency int) *JobPool {
 	return &JobPool{sem: make(chan struct{}, concurrency)}
 }
 
-// Enqueue schedules a job; panics inside a job are swallowed so one bad
-// attachment cannot take down the test process.
+// Enqueue schedules a job; panics inside a job are logged at debug and
+// swallowed so one bad attachment cannot take down the test process.
 func (p *JobPool) Enqueue(job func()) {
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
 		p.sem <- struct{}{}
 		defer func() { <-p.sem }()
-		defer func() { _ = recover() }()
+		defer func() {
+			if r := recover(); r != nil {
+				LogDebug("Tracera: upload job failed: %v", r)
+			}
+		}()
 		job()
 	}()
 }
