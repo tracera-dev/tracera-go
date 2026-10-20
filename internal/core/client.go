@@ -24,11 +24,12 @@ const (
 
 // AppCapabilities mirrors the server capability flags the adapter needs.
 type AppCapabilities struct {
-	AutotestCreateRun    bool `json:"autotestCreateRun"`
-	AutotestFinishRun    bool `json:"autotestFinishRun"`
-	AutotestResultsBatch bool `json:"autotestResultsBatch"`
-	TestResultEnvVars    bool `json:"testResultEnvVars"`
-	AutotestBlobsBatch   bool `json:"autotestBlobsBatch"`
+	AutotestCreateRun    bool  `json:"autotestCreateRun"`
+	AutotestFinishRun    bool  `json:"autotestFinishRun"`
+	AutotestResultsBatch bool  `json:"autotestResultsBatch"`
+	TestResultEnvVars    bool  `json:"testResultEnvVars"`
+	AutotestBlobsBatch   bool  `json:"autotestBlobsBatch"`
+	AutotestAttachScope  *bool `json:"autotestAttachScope"` // nil = omit (older server)
 }
 
 // AppConfig is the subset of /app-config the adapter reads.
@@ -41,7 +42,7 @@ type AppConfig struct {
 // BatchItem is one TestResult row on the results batch wire.
 type BatchItem struct {
 	IsAutomated     bool              `json:"isAutomated"`
-	TestCaseID      int               `json:"testCaseId"`
+	TestCaseID      *int              `json:"testCaseId"` // nil = unbound (Unknown)
 	TestRunID       int               `json:"testRunId"`
 	Result          string            `json:"result,omitempty"`
 	AutotestName    string            `json:"autotestName,omitempty"`
@@ -171,6 +172,53 @@ func isVersionAtLeast(actual, minimum string) bool {
 
 // EnsureCompatible refuses servers below MinTraceraVersion or missing the
 // Autotest capabilities the adapter depends on.
+// FetchAttachScope returns the allow-list, or nil when capability missing / GET fails.
+func (c *Client) FetchAttachScope(testRunID int) (*AttachScope, error) {
+	c.mu.Lock()
+	caps := c.appConfig
+	c.mu.Unlock()
+	if caps != nil && caps.Capabilities != nil &&
+		caps.Capabilities.AutotestAttachScope != nil &&
+		!*caps.Capabilities.AutotestAttachScope {
+		LogWarn("Tracera: server has no autotestAttachScope — not filtering")
+		return nil, nil
+	}
+	if cached := ReadAttachScopeCache(c.config.ProjectID, testRunID); cached != nil {
+		return cached, nil
+	}
+	url := fmt.Sprintf(
+		"%s/projects/%d/test-runs/%d/autotest/attach-scope",
+		c.config.BaseURL,
+		c.config.ProjectID,
+		testRunID,
+	)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.config.Token)
+	res, err := apiClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= 400 {
+		LogWarn("Tracera: attach-scope GET failed: HTTP %d — not filtering", res.StatusCode)
+		return nil, nil
+	}
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, err
+	}
+	scope := ParseAttachScopeJSON(body)
+	if scope == nil {
+		// Non-object body (null / array / scalar) → fail-open (do not cache).
+		return nil, nil
+	}
+	WriteAttachScopeCache(c.config.ProjectID, testRunID, scope)
+	return scope, nil
+}
+
 func (c *Client) EnsureCompatible(app *AppConfig) error {
 	if app == nil || !isVersionAtLeast(app.Version, MinTraceraVersion) {
 		version := ""

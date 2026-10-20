@@ -2,10 +2,10 @@
 
 Tracera Autotest adapter for the Go standard-library `testing` package.
 
-**Requires Go ≥ 1.25.**
+**Tested on Go 1.25–1.27.**
 
 ```bash
-go get github.com/tracera-dev/tracera-go/gotest
+go get github.com/tracera-dev/tracera-go/gotest/v2
 ```
 
 Wire reporting once from `TestMain` — without it buffered results can be lost and the run is never closed (the adapter warns once):
@@ -66,7 +66,7 @@ tracera.Teardown("drop the account", func() { /* ... */ })
 
 ## Comments, errors, and attachments
 
-`tracera.Comment`, `tracera.Error`, and the attachment helpers attach to the open step, or to the result when no step is open. Shared placement and `tracera.error` rules: https://tracera.dev/docs/adapters.
+`tracera.Comment`, `tracera.Error`, and the attachment helpers attach to the open step, or to the result when no step is open. Shared placement and `tracera.error` rules: [Autotest adapters](https://tracera.dev/docs/adapters#comments-errors-and-attachments).
 
 Attach a file from disk with `tracera.AttachmentFile` (uploaded when the result is reported — the file must still exist then) or in-memory bytes with `tracera.AttachmentBytes` (the bytes are copied). MIME type is optional. Up to ten attachments on a step and ten on the result.
 
@@ -112,4 +112,4 @@ for _, row := range rows {
 }
 ```
 
-Environment variables, run modes and `.env` lookup: [Autotest adapters](https://tracera.dev/docs/adapters).
+Environment variables, run modes and `.env` lookup: [Autotest adapters](https://tracera.dev/docs/adapters#environment).

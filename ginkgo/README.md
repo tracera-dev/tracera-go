@@ -2,16 +2,16 @@
 
 Tracera Autotest adapter for Ginkgo v2.
 
-**Requires Go ≥ 1.25 and Ginkgo v2.**
+**Tested on Go 1.25–1.27 and Ginkgo 2–2.33.**
 
 ```bash
-go get github.com/tracera-dev/tracera-go/ginkgo
+go get github.com/tracera-dev/tracera-go/ginkgo/v2
 ```
 
 Call `Register()` once in the suite file:
 
 ```go
-import traceraginkgo "github.com/tracera-dev/tracera-go/ginkgo"
+import traceraginkgo "github.com/tracera-dev/tracera-go/ginkgo/v2"
 
 var _ = traceraginkgo.Register()
 ```
@@ -46,7 +46,7 @@ It("pays", func() {
 
 ## Comments, errors, and attachments
 
-`tracera.Comment`, `tracera.Error`, and the attachment helpers attach to the open step, or to the result when no step is open. Shared placement and `tracera.error` rules: https://tracera.dev/docs/adapters.
+`tracera.Comment`, `tracera.Error`, and the attachment helpers attach to the open step, or to the result when no step is open. Shared placement and `tracera.error` rules: [Autotest adapters](https://tracera.dev/docs/adapters#comments-errors-and-attachments).
 
 Attach a file with `tracera.AttachmentFile` or bytes with `tracera.AttachmentBytes` — they upload when the result is reported. MIME type is optional. Up to ten attachments on a step and ten on the result. Prefer those helpers over `tracera.Attachment` with a pre-uploaded id.
 
@@ -71,4 +71,4 @@ DescribeTable("checkout", Label("tracera.id:101"),
 )
 ```
 
-Environment variables, run modes and `.env` lookup: [Autotest adapters](https://tracera.dev/docs/adapters).
+Environment variables, run modes and `.env` lookup: [Autotest adapters](https://tracera.dev/docs/adapters#environment).

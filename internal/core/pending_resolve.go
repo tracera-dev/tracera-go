@@ -91,7 +91,7 @@ func discardPendingList(list []map[string]any) {
 
 // DiscardPendingBlobs drops the bodies behind every pending slot on payload
 // (result level and every step). Runners reach it through EnqueueResult when a
-// result is dropped (soft-disabled, unbound, reporting stopped).
+// result is dropped (soft-disabled, out of attach scope, unnamed unbound, reporting stopped).
 func DiscardPendingBlobs(payload *Payload) {
 	if payload == nil {
 		return

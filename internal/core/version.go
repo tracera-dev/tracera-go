@@ -1,4 +1,4 @@
 package core
 
 // AdapterVersion is the lockstep release version of the Go adapters.
-const AdapterVersion = "1.2.1"
+const AdapterVersion = "2.0.0"

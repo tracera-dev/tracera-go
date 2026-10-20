@@ -29,6 +29,9 @@ const HandoffKeyEnv = "TRACERA_HANDOFF_KEY"
 // (peers that never overlap still risk N× create_run — set the count).
 const PeerCountEnv = "TRACERA_PEER_COUNT"
 
+// handoffSelfPID is the participant pid written into .id files (tests override).
+var handoffSelfPID = os.Getpid
+
 // peerWorkerLabel renders a worker id — from the env opt-in or from a runner
 // that detected the fork itself — as a log label.
 func peerWorkerLabel(worker string) string {
@@ -124,52 +127,122 @@ func peerCount(env map[string]string) int {
 	return n
 }
 
-func writeHandoffState(idPath string, runID, refs, claimed int) error {
+type handoffState struct {
+	runID      int
+	refs       int
+	claimed    int
+	pids       []int
+	hasPidLine bool
+}
+
+func parseHandoffPids(line string) []int {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil
+	}
+	var out []int
+	for _, part := range strings.Split(line, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		n, err := strconv.Atoi(part)
+		if err != nil || n <= 0 {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+func liveHandoffPids(pids []int) []int {
+	var out []int
+	for _, pid := range pids {
+		if processAlive(pid) {
+			out = append(out, pid)
+		}
+	}
+	return out
+}
+
+func removeOneHandoffPid(pids []int, pid int) []int {
+	out := make([]int, 0, len(pids))
+	removed := false
+	for _, p := range pids {
+		if !removed && p == pid {
+			removed = true
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func holdForLatePeers(claimed int, env map[string]string) bool {
+	expected := peerCount(env)
+	return expected > 0 && claimed < expected
+}
+
+func shouldAttachExisting(state handoffState, live []int, env map[string]string) bool {
+	if len(live) > 0 {
+		return true
+	}
+	return holdForLatePeers(state.claimed, env)
+}
+
+func writeHandoffState(idPath string, state handoffState) error {
 	if err := os.MkdirAll(filepath.Dir(idPath), 0o755); err != nil {
 		return err
 	}
 	tmp := idPath + ".tmp"
-	if err := os.WriteFile(tmp, []byte(fmt.Sprintf("%d\n%d\n%d\n", runID, refs, claimed)), 0o644); err != nil {
+	pidParts := make([]string, len(state.pids))
+	for i, p := range state.pids {
+		pidParts[i] = strconv.Itoa(p)
+	}
+	body := fmt.Sprintf("%d\n%d\n%d\n%s\n", state.runID, state.refs, state.claimed, strings.Join(pidParts, ","))
+	if err := os.WriteFile(tmp, []byte(body), 0o644); err != nil {
 		return err
 	}
-	// Windows rename fails when the destination exists; remove first so
-	// refs++ updates work on every OS (Python Path.replace / .NET File.Move overwrite).
 	_ = os.Remove(idPath)
 	return os.Rename(tmp, idPath)
 }
 
-func readHandoffState(idPath string) (runID, refs, claimed int, ok bool) {
+func readHandoffState(idPath string) (handoffState, bool) {
 	raw, err := os.ReadFile(idPath)
 	if err != nil {
-		return 0, 0, 0, false
+		return handoffState{}, false
 	}
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
 	if len(lines) == 0 {
-		return 0, 0, 0, false
+		return handoffState{}, false
 	}
-	runID, err = strconv.Atoi(strings.TrimSpace(lines[0]))
+	runID, err := strconv.Atoi(strings.TrimSpace(lines[0]))
 	if err != nil || runID <= 0 {
-		return 0, 0, 0, false
+		return handoffState{}, false
 	}
-	refs = 1
+	refs := 1
 	if len(lines) > 1 {
 		refs, err = strconv.Atoi(strings.TrimSpace(lines[1]))
 		if err != nil || refs < 0 {
-			return 0, 0, 0, false
+			return handoffState{}, false
 		}
 	}
-	// Legacy two-line files: treat claimed as current refs (best effort).
-	claimed = refs
+	claimed := refs
 	if claimed < 1 {
 		claimed = 1
 	}
 	if len(lines) > 2 {
 		claimed, err = strconv.Atoi(strings.TrimSpace(lines[2]))
 		if err != nil || claimed < 0 {
-			return 0, 0, 0, false
+			return handoffState{}, false
 		}
 	}
-	return runID, refs, claimed, true
+	hasPidLine := len(lines) > 3
+	var pids []int
+	if hasPidLine {
+		pids = parseHandoffPids(lines[3])
+	}
+	return handoffState{runID: runID, refs: refs, claimed: claimed, pids: pids, hasPidLine: hasPidLine}, true
 }
 
 // handoffLockStaleAfter is how old a lock file may get before it is treated as
@@ -233,30 +306,55 @@ func releaseLock(lockPath string, fh *os.File) {
 // ClaimPeerRun attaches to the shared run id, creating it on first claim.
 // The second return value is true for the process that created the run.
 func ClaimPeerRun(projectID int, runTitle string, createRun func() (int, error)) (int, bool, error) {
-	idPath, lockPath := handoffPaths(projectID, runTitle)
+	return claimPeerRunFor(projectID, runTitle, EnvMap(), handoffSelfPID(), createRun)
+}
+
+func claimPeerRunFor(
+	projectID int,
+	runTitle string,
+	env map[string]string,
+	selfPID int,
+	createRun func() (int, error),
+) (int, bool, error) {
+	idPath, lockPath := handoffPathsFor(projectID, runTitle, env)
 	fh, err := acquireLock(lockPath, 60*time.Second)
 	if err != nil {
 		return 0, false, err
 	}
 	defer releaseLock(lockPath, fh)
 
-	if runID, refs, claimed, ok := readHandoffState(idPath); ok {
+	if state, ok := readHandoffState(idPath); ok {
 		if handoffIDStale(idPath) {
 			_ = os.Remove(idPath)
 			LogDebug("Tracera: peer handoff .id file stale (>%s), creating a new run", handoffIDStaleAfter)
 		} else {
-			if err := writeHandoffState(idPath, runID, refs+1, claimed+1); err != nil {
-				return 0, false, err
+			live := []int(nil)
+			if state.hasPidLine {
+				live = liveHandoffPids(state.pids)
 			}
-			LogDebug("Tracera: peer handoff attach run #%d (refs=%d, claimed=%d)", runID, refs+1, claimed+1)
-			return runID, false, nil
+			if shouldAttachExisting(state, live, env) {
+				pids := append(append([]int(nil), live...), selfPID)
+				next := handoffState{
+					runID: state.runID, refs: len(pids), claimed: state.claimed + 1,
+					pids: pids, hasPidLine: true,
+				}
+				if err := writeHandoffState(idPath, next); err != nil {
+					return 0, false, err
+				}
+				LogDebug("Tracera: peer handoff attach run #%d (refs=%d, claimed=%d)", next.runID, next.refs, next.claimed)
+				return next.runID, false, nil
+			}
+			_ = os.Remove(idPath)
+			LogDebug("Tracera: peer handoff abandoned run #%d (no live peers), creating a new run", state.runID)
 		}
 	}
 	runID, err := createRun()
 	if err != nil {
 		return 0, false, err
 	}
-	if err := writeHandoffState(idPath, runID, 1, 1); err != nil {
+	if err := writeHandoffState(idPath, handoffState{
+		runID: runID, refs: 1, claimed: 1, pids: []int{selfPID}, hasPidLine: true,
+	}); err != nil {
 		return 0, false, err
 	}
 	LogDebug("Tracera: peer handoff created run #%d", runID)
@@ -282,7 +380,11 @@ func DiscardPeerRun(projectID int, runTitle string) {
 
 // ReleasePeerRun drops one participant; the last expected peer calls finish.
 func ReleasePeerRun(projectID int, runTitle string, finish func()) {
-	idPath, lockPath := handoffPaths(projectID, runTitle)
+	releasePeerRunFor(projectID, runTitle, EnvMap(), handoffSelfPID(), finish)
+}
+
+func releasePeerRunFor(projectID int, runTitle string, env map[string]string, selfPID int, finish func()) {
+	idPath, lockPath := handoffPathsFor(projectID, runTitle, env)
 	if _, err := os.Stat(idPath); err != nil {
 		return
 	}
@@ -293,29 +395,36 @@ func ReleasePeerRun(projectID int, runTitle string, finish func()) {
 	}
 	defer releaseLock(lockPath, fh)
 
-	runID, refs, claimed, ok := readHandoffState(idPath)
+	state, ok := readHandoffState(idPath)
 	if !ok {
 		return
 	}
-	refs--
-	if refs < 0 {
-		refs = 0
+	var refs int
+	var pids []int
+	if state.hasPidLine {
+		pids = removeOneHandoffPid(liveHandoffPids(state.pids), selfPID)
+		refs = len(pids)
+	} else {
+		refs = state.refs - 1
+		if refs < 0 {
+			refs = 0
+		}
 	}
+	next := handoffState{runID: state.runID, refs: refs, claimed: state.claimed, pids: pids, hasPidLine: true}
 	if refs > 0 {
-		_ = writeHandoffState(idPath, runID, refs, claimed)
-		LogDebug("Tracera: peer handoff release run #%d (refs=%d)", runID, refs)
+		_ = writeHandoffState(idPath, next)
+		LogDebug("Tracera: peer handoff release run #%d (refs=%d)", state.runID, refs)
 		return
 	}
-	expected := peerCount(EnvMap())
-	if expected > 0 && claimed < expected {
-		_ = writeHandoffState(idPath, runID, refs, claimed)
+	if holdForLatePeers(state.claimed, env) {
+		_ = writeHandoffState(idPath, next)
 		LogDebug(
 			"Tracera: peer handoff holding run #%d open (claimed=%d/%d, waiting for peers)",
-			runID, claimed, expected,
+			state.runID, state.claimed, peerCount(env),
 		)
 		return
 	}
 	finish()
 	_ = os.Remove(idPath)
-	LogDebug("Tracera: peer handoff finished run #%d", runID)
+	LogDebug("Tracera: peer handoff finished run #%d", state.runID)
 }

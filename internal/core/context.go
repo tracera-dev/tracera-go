@@ -477,14 +477,15 @@ func AttachmentFile(path string, mimeType ...string) {
 // The bytes are copied so later mutation of the caller's slice cannot change
 // what is uploaded.
 func AttachmentBytes(fileName string, data []byte, mimeType ...string) {
+	// Soft: empty / nil body — no slot (JS/Python/JVM/.NET unified attachment parity).
+	if len(data) == 0 {
+		return
+	}
 	name := strings.TrimSpace(fileName)
 	if name == "" {
 		name = "file"
 	}
-	var copyData []byte
-	if len(data) > 0 {
-		copyData = append([]byte(nil), data...)
-	}
+	copyData := append([]byte(nil), data...)
 	attachPending(name, resolveAttachmentMime(name, mimeType), copyData, "")
 }
 
@@ -672,8 +673,20 @@ func (c *TestContext) clearStepTreesLocked() {
 }
 
 // TestCase binds the active context to a Tracera test case id, with an
-// optional result name.
+// optional result name. Out-of-attach-scope bound ids invoke the skip handler
+// (see [SetAttachScopeSkipHandler]) or panic [AttachScopeSkip].
 func TestCase(testCaseID int, name ...string) {
+	if testCaseID > 0 && !IsAllowed(testCaseID) {
+		LogAttachSkipExecution(testCaseID)
+		attachScopeSkipHandlerMu.Lock()
+		fn := attachScopeSkipHandler
+		attachScopeSkipHandlerMu.Unlock()
+		if fn != nil {
+			fn(AttachOutOfScopeReason)
+			return
+		}
+		panic(AttachScopeSkip{})
+	}
 	ctx := GetContext()
 	if ctx == nil {
 		return

@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/cucumber/godog"
-	"github.com/tracera-dev/tracera-go/plugin"
+	"github.com/tracera-dev/tracera-go/v2/plugin"
 )
 
 const godogModulePath = "github.com/cucumber/godog"
@@ -50,6 +50,12 @@ var (
 	// scenario hooks never share state — `godog.Options.Concurrency` runs
 	// several scenarios at once, each on its own goroutine.
 	active sync.Map // scenario id -> *scenarioState
+
+	// skipByCtx maps an active pin → godog.TestingT so the process-global
+	// attach skip handler can SkipNow the right scenario under Concurrency
+	// (GetContext is goroutine-local; a bare panic(ErrSkip) is recovered into
+	// Godog's traceError without Unwrap and becomes StepFailed).
+	skipByCtx sync.Map // *plugin.TestContext -> godog.TestingT
 )
 
 // scenarioState is owned by the goroutine running its scenario: Godog calls
@@ -119,10 +125,38 @@ func Register(sc *godog.ScenarioContext) {
 	})
 }
 
+// attachScopeSkip aborts the Godog scenario pinned for the current goroutine's
+// context via TestingT.SkipNow. Godog recovers SkipNow's errStopNow and turns
+// it into ErrSkip; a plain panic(wrapped ErrSkip) loses Unwrap inside
+// traceError and is reported as Failed.
+func attachScopeSkip(reason string) {
+	pin := plugin.GetContext()
+	if pin != nil {
+		if v, ok := skipByCtx.Load(pin); ok {
+			t := v.(godog.TestingT)
+			t.Skip(reason)
+			t.SkipNow()
+		}
+	}
+	// No TestingT (unit hooks without a live pickle) — still prefer a wrapped
+	// ErrSkip so callers that return/check errors keep errors.Is. Live suites
+	// always have TestingT from runPickle.
+	panic(fmt.Errorf("%s: %w", reason, godog.ErrSkip))
+}
+
 // registerLifecycle installs Before + step hooks without closing the result.
 func registerLifecycle(sc *godog.ScenarioContext) {
+	// Imperative tracera.TestCase out-of-scope → native Godog SkipNow.
+	plugin.SetAttachScopeSkipHandler(attachScopeSkip)
 	sc.Before(func(ctx context.Context, scenario *godog.Scenario) (context.Context, error) {
-		return context.WithValue(ctx, stateKey{}, beginScenario(scenario)), nil
+		state, err := beginScenario(scenario)
+		if err != nil {
+			return ctx, err
+		}
+		if t := godog.T(ctx); t != nil {
+			skipByCtx.Store(state.ctx, t)
+		}
+		return context.WithValue(ctx, stateKey{}, state), nil
 	})
 
 	sc.StepContext().Before(func(ctx context.Context, st *godog.Step) (context.Context, error) {
@@ -151,10 +185,14 @@ func scenarioTags(scenario *godog.Scenario) []string {
 	return out
 }
 
-func beginScenario(scenario *godog.Scenario) *scenarioState {
+func beginScenario(scenario *godog.Scenario) (*scenarioState, error) {
 	ensureStarted()
 
 	testCaseID, bindName := plugin.ParseBindTags(scenarioTags(scenario))
+	if testCaseID > 0 && !plugin.IsAllowed(testCaseID) {
+		plugin.LogAttachSkipExecution(testCaseID)
+		return nil, fmt.Errorf("%s: %w", plugin.AttachOutOfScopeReason, godog.ErrSkip)
+	}
 	name := bindName
 	if name == "" {
 		name = scenario.Name
@@ -170,7 +208,7 @@ func beginScenario(scenario *godog.Scenario) *scenarioState {
 	// Everything before the first Gherkin step — the stock Before-scenario
 	// hooks — belongs to Setup.
 	plugin.SetPhase(plugin.SectionSetup)
-	return state
+	return state, nil
 }
 
 // closeStep finishes the Tracera step for one Gherkin step, following the
@@ -186,9 +224,9 @@ func closeStep(state *scenarioState, status godog.StepResultStatus, err error) {
 		// Godog never ran the body — the step must not show up in Steps.
 		handle.Discard()
 	case godog.StepFailed, godog.StepAmbiguous:
-		if isBeforeHookFailure(err) {
-			// A failed Before-scenario hook reaches the first Gherkin step, but
-			// the step never ran: the hook error belongs to the result.
+		if isBeforeHookFailure(err) || isRecoveredAttachScopeSkip(err) {
+			// Before-hook failure: step never ran. Recovered attach-scope panic
+			// (no TestingT path): treat as skip, not a step failure.
 			handle.Discard()
 			return
 		}
@@ -228,11 +266,20 @@ func failureOf(err error) plugin.Failure {
 
 // isSkip reports whether Godog ended the Scenario without a failure: a step
 // returned godog.ErrSkip, or a step was pending / undefined outside strict
-// mode.
+// mode. Also matches a recovered attach-scope panic whose Unwrap chain Godog
+// stripped into traceError.
 func isSkip(err error) bool {
 	return errors.Is(err, godog.ErrSkip) ||
 		errors.Is(err, godog.ErrPending) ||
-		errors.Is(err, godog.ErrUndefined)
+		errors.Is(err, godog.ErrUndefined) ||
+		isRecoveredAttachScopeSkip(err)
+}
+
+// isRecoveredAttachScopeSkip detects Godog's panic→traceError path for our
+// fallback `panic(fmt.Errorf("%s: %w", reason, ErrSkip))`: Error() keeps the
+// reason text but errors.Is can no longer see ErrSkip.
+func isRecoveredAttachScopeSkip(err error) bool {
+	return err != nil && strings.Contains(err.Error(), plugin.AttachOutOfScopeReason)
 }
 
 // skipReason drops Godog's bare sentinel text; only a wrapped reason —
@@ -242,6 +289,9 @@ func isSkip(err error) bool {
 func skipReason(err error) string {
 	if err == nil {
 		return ""
+	}
+	if isRecoveredAttachScopeSkip(err) {
+		return plugin.AttachOutOfScopeReason
 	}
 	text := err.Error()
 	for _, sentinel := range []error{godog.ErrSkip, godog.ErrPending, godog.ErrUndefined} {
@@ -267,6 +317,7 @@ func endScenario(scenario *godog.Scenario, scenarioErr error) {
 	if state == nil {
 		return
 	}
+	defer skipByCtx.Delete(state.ctx)
 
 	ctx := state.ctx
 	payload := plugin.SnapshotPayload(ctx)

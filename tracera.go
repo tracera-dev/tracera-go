@@ -2,13 +2,13 @@
 // for Go: bind, steps, comments, errors, attachments and context pinning.
 //
 // Runner wiring (session lifecycle, phases, registry) lives in
-// github.com/tracera-dev/tracera-go/plugin and is used by the gotest, ginkgo
+// github.com/tracera-dev/tracera-go/v2/plugin and is used by the gotest, ginkgo
 // and godog packages — not by test authors.
 //
 // Customer how-to: https://tracera.dev/docs/adapters
 package tracera
 
-import "github.com/tracera-dev/tracera-go/internal/core"
+import "github.com/tracera-dev/tracera-go/v2/internal/core"
 
 // AttachmentMeta references an uploaded blob on a step or on the result.
 type AttachmentMeta = core.AttachmentMeta

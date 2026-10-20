@@ -24,8 +24,8 @@ import (
 	"testing"
 	"time"
 
-	tracera "github.com/tracera-dev/tracera-go"
-	"github.com/tracera-dev/tracera-go/plugin"
+	tracera "github.com/tracera-dev/tracera-go/v2"
+	"github.com/tracera-dev/tracera-go/v2/plugin"
 )
 
 var (
@@ -37,12 +37,35 @@ var (
 	// the run and flush what is still buffered when the binary exits.
 	wired      atomic.Bool
 	unwiredLog sync.Once
+
+	// skipByCtx maps an active pin → *testing.T so the process-global attach
+	// skip handler can t.Skip the right test under t.Parallel() (GetContext is
+	// goroutine-local; a per-TestCase SetAttachScopeSkipHandler would race).
+	skipByCtx sync.Map // *plugin.TestContext -> *testing.T
 )
 
 // ensureStarted opens the reporting session on first use. Run calls it; tests
 // that bind without a TestMain get it lazily.
 func ensureStarted() {
 	startOnce.Do(func() { plugin.BeginReporting(reporter) })
+	// Re-install after ResetAttachFilterForTests (unit) — not only on first start.
+	plugin.SetAttachScopeSkipHandler(attachScopeSkip)
+}
+
+// attachScopeSkip aborts the *testing.T pinned for the current goroutine's
+// context. Used for imperative tracera.TestCase rebind under an attach filter.
+// Must not return without aborting — core.TestCase treats a returning handler as
+// done and would continue the body.
+func attachScopeSkip(reason string) {
+	ctx := plugin.GetContext()
+	if ctx != nil {
+		if v, ok := skipByCtx.Load(ctx); ok {
+			t := v.(*testing.T)
+			t.Helper()
+			t.Skip(reason)
+		}
+	}
+	panic(plugin.AttachScopeSkip{})
 }
 
 // Run wires reporting around the stdlib test runner and returns the exit code.
@@ -82,12 +105,17 @@ func TestCase(t *testing.T, testCaseID int, name ...string) {
 	ensureStarted()
 	warnIfUnwired()
 
+	// Parallel-safe: filter before any context alloc / process-global handler.
+	// Out-of-scope is not reported — stock t.Skip (no Comment on a missing pin).
+	if testCaseID > 0 && !plugin.IsAllowed(testCaseID) {
+		plugin.LogAttachSkipExecution(testCaseID)
+		t.Skip(plugin.AttachOutOfScopeReason)
+	}
+
 	if existing, ok := active.Load(t); ok {
 		state := existing.(*testState)
-		state.ctx.SetTestCaseID(testCaseID)
-		if len(name) > 0 && name[0] != "" {
-			state.ctx.SetAutotestName(name[0])
-		}
+		plugin.InstallContext(state.ctx)
+		tracera.TestCase(testCaseID, name...) // may Skip via attachScopeSkip
 		return
 	}
 
@@ -95,12 +123,13 @@ func TestCase(t *testing.T, testCaseID int, name ...string) {
 	if len(name) > 0 && name[0] != "" {
 		autotestName = name[0]
 	}
-	ctx := plugin.CreateTestContext(testCaseID, autotestName)
+	ctx := plugin.CreateTestContext(0, autotestName)
 	state := &testState{ctx: ctx, started: time.Now(), bindSite: callerSite(2)}
 	active.Store(t, state)
+	skipByCtx.Store(ctx, t)
 	plugin.InstallContext(ctx)
 	plugin.SetPhase(plugin.SectionTest)
-
+	tracera.TestCase(testCaseID, name...)
 	t.Cleanup(func() { report(t, state) })
 }
 
@@ -197,6 +226,7 @@ func defaultFailure(testName, bindSite string) plugin.Failure {
 func report(t *testing.T, state *testState) {
 	defer func() {
 		active.Delete(t)
+		skipByCtx.Delete(state.ctx)
 		plugin.ClearContext()
 	}()
 

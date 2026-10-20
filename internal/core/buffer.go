@@ -147,9 +147,12 @@ func NewResultBuffer(session *Session) *ResultBuffer {
 	return &ResultBuffer{session: session}
 }
 
-// Enqueue buffers a bound result; unbound results are dropped.
+// Enqueue buffers a bound (in-scope) or unbound (named) result.
 func (b *ResultBuffer) Enqueue(item *PendingResult) {
-	if !b.session.ReportingEnabled() || item.Ctx == nil || item.Ctx.TestCaseID() <= 0 {
+	if !b.session.ReportingEnabled() || item.Ctx == nil {
+		return
+	}
+	if !ShouldReport(item.Ctx.TestCaseID(), item.Ctx.AutotestName()) {
 		return
 	}
 	b.mu.Lock()
@@ -280,7 +283,11 @@ func (b *ResultBuffer) flushOnce() {
 			b.session.SetLastError(reason)
 			where := fmt.Sprintf("batch index %d", r.Index)
 			if r.Index >= 0 && r.Index < len(items) {
-				where = fmt.Sprintf("testCaseId=%d", items[r.Index].TestCaseID)
+				if id := items[r.Index].TestCaseID; id != nil {
+					where = fmt.Sprintf("testCaseId=%d", *id)
+				} else {
+					where = fmt.Sprintf("unbound %q", items[r.Index].AutotestName)
+				}
 			}
 			LogError("Tracera: server rejected result (%s): %s", where, reason)
 		}
@@ -320,9 +327,13 @@ func (b *ResultBuffer) toBatchItem(p *PendingResult, payload *Payload, baseEnv m
 			envVars[k] = v
 		}
 	}
+	var caseID *int
+	if id := p.Ctx.TestCaseID(); id > 0 {
+		caseID = &id
+	}
 	return BatchItem{
 		IsAutomated:     true,
-		TestCaseID:      p.Ctx.TestCaseID(),
+		TestCaseID:      caseID,
 		TestRunID:       b.session.TestRunID,
 		Result:          p.Status,
 		AutotestName:    p.Ctx.AutotestName(),

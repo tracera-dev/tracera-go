@@ -8,7 +8,7 @@ import (
 )
 
 // MinTraceraVersion is the lowest server version this adapter talks to.
-const MinTraceraVersion = "0.4.0"
+const MinTraceraVersion = "1.0.0"
 
 const (
 	uploadJobConcurrency = 4

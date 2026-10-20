@@ -1,7 +1,7 @@
 // Package core holds the Tracera Go adapter implementation.
 //
 // Customer names are re-exported by the root `tracera` package; runner/plugin
-// helpers by `github.com/tracera-dev/tracera-go/plugin`. Nothing here is part
+// helpers by `github.com/tracera-dev/tracera-go/v2/plugin`. Nothing here is part
 // of the customer surface.
 package core
 

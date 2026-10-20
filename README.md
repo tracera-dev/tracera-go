@@ -2,17 +2,17 @@
 
 Tracera Autotest adapter core for Go (HTTP, flush, log, dotenv, Env, context).
 
-**Requires Go ≥ 1.25.**
+**Tested on Go 1.25–1.27.**
 
 ```bash
-go get github.com/tracera-dev/tracera-go
+go get github.com/tracera-dev/tracera-go/v2
 ```
 
 ```go
-import tracera "github.com/tracera-dev/tracera-go"
+import tracera "github.com/tracera-dev/tracera-go/v2"
 ```
 
-Pick a runner package unless you are writing a custom integration: `…/gotest`, `…/ginkgo`, `…/godog`.
+Pick a runner package unless you are writing a custom integration: `…/gotest/v2`, `…/ginkgo/v2`, `…/godog/v2`.
 
 ## Bind
 
@@ -75,7 +75,7 @@ Usual case: one process, one test run — nothing extra to set. Ginkgo parallel 
 
 Only when **you** start several OS processes and want them in the **same** run: give each a different `TRACERA_PEER_WORKER` for that launch. The first process opens the run; the last closes it. You do not create the run by hand.
 
-Environment variables and `.env` lookup: [Autotest adapters](https://tracera.dev/docs/adapters).
+Environment variables and `.env` lookup: [Autotest adapters](https://tracera.dev/docs/adapters#environment).
 
 ## License
 

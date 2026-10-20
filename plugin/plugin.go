@@ -6,7 +6,7 @@
 package plugin
 
 import (
-	"github.com/tracera-dev/tracera-go/internal/core"
+	"github.com/tracera-dev/tracera-go/v2/internal/core"
 )
 
 // Reporting lifecycle types.
@@ -67,6 +67,34 @@ func EnqueueResult(state *ReporterState, item *PendingResult) { core.EnqueueResu
 func CreateTestContext(testCaseID int, autotestName string) *TestContext {
 	return core.CreateTestContext(testCaseID, autotestName)
 }
+
+// IsAllowed reports whether a bound case may run under the attach-scope filter.
+func IsAllowed(testCaseID int) bool { return core.IsAllowed(testCaseID) }
+
+// AttachOutOfScopeReason is the shared runner skip message for filtered bounds.
+const AttachOutOfScopeReason = core.AttachOutOfScopeReason
+
+// AttachScopeSkip is panicked when an out-of-scope bind cannot be mapped to a
+// native runner skip (no pin / no *testing.T). Prefer SetAttachScopeSkipHandler.
+type AttachScopeSkip = core.AttachScopeSkip
+
+// SetAttachScopeSkipHandler installs the runner skip callback for out-of-scope
+// imperative binds (core.TestCase / customer tracera.TestCase).
+func SetAttachScopeSkipHandler(fn func(reason string)) {
+	core.SetAttachScopeSkipHandler(fn)
+}
+
+// LogAttachSkipExecution emits debug when a runner skips execution.
+func LogAttachSkipExecution(testCaseID int) { core.LogAttachSkipExecution(testCaseID) }
+
+// SetAttachFilter installs or clears the allow-list (tests / runners).
+func SetAttachFilter(scope *AttachScope) { core.SetAttachFilter(scope) }
+
+// AttachScope is the allow-list shape from GET …/autotest/attach-scope.
+type AttachScope = core.AttachScope
+
+// ResetAttachFilterForTests clears process filter state (unit tests).
+func ResetAttachFilterForTests() { core.ResetAttachFilterForTests() }
 
 // InstallContext pins ctx on the current goroutine until ClearContext.
 func InstallContext(ctx *TestContext) { core.InstallContext(ctx) }

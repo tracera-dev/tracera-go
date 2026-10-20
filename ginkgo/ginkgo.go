@@ -21,7 +21,7 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/ginkgo/v2/types"
-	"github.com/tracera-dev/tracera-go/plugin"
+	"github.com/tracera-dev/tracera-go/v2/plugin"
 )
 
 // ginkgoVersion is the Ginkgo version for the Env tab. It comes from Ginkgo's
@@ -41,6 +41,9 @@ var (
 	mu      sync.Mutex
 	current *plugin.TestContext
 	started time.Time
+	// attachSkipID > 0: beginSpec saw an out-of-scope bind — no context alloc;
+	// beginAttempt Skips (ReportBeforeEach Skip does not abort the It body).
+	attachSkipID int
 )
 
 // ensureStarted opens the reporting session on first use. It runs inside the
@@ -81,6 +84,8 @@ func finishSuite(report ginkgo.Report) {
 // It returns true so it can sit in a `var _ =` declaration like Ginkgo's own
 // tree-building calls.
 func Register() bool {
+	// Imperative tracera.TestCase out-of-scope → native Ginkgo Skip (core contract).
+	plugin.SetAttachScopeSkipHandler(func(reason string) { ginkgo.Skip(reason) })
 	ginkgo.ReportBeforeEach(func(report ginkgo.SpecReport) { beginSpec(report) })
 	ginkgo.BeforeEach(func() { beginAttempt(ginkgo.CurrentSpecReport()) })
 	ginkgo.JustBeforeEach(func() { plugin.SetPhase(plugin.SectionTest) })
@@ -108,15 +113,21 @@ func beginSpec(report ginkgo.SpecReport) {
 	ensureStarted()
 
 	testCaseID, bindName := plugin.ParseBindTags(report.Labels())
-	ctx := plugin.CreateTestContext(testCaseID, specName(report, bindName))
 
 	mu.Lock()
-	current = ctx
 	started = time.Now()
-	mu.Unlock()
-
+	attachSkipID = 0
+	if testCaseID > 0 && !plugin.IsAllowed(testCaseID) {
+		// No CreateTestContext — EnqueueResult would only discard later.
+		current = nil
+		attachSkipID = testCaseID
+		mu.Unlock()
+		return
+	}
 	// Pin in beginAttempt (BeforeEach), not here: suite-before-fail still has
 	// `current` for ReportAfterEach when BeforeAll panics before BeforeEach.
+	current = plugin.CreateTestContext(testCaseID, specName(report, bindName))
+	mu.Unlock()
 }
 
 // beginAttempt opens the Setup section for one attempt. Ginkgo reports a
@@ -131,7 +142,12 @@ func beginSpec(report ginkgo.SpecReport) {
 func beginAttempt(report ginkgo.SpecReport) {
 	mu.Lock()
 	ctx := current
+	skipID := attachSkipID
 	mu.Unlock()
+	if skipID > 0 {
+		plugin.LogAttachSkipExecution(skipID)
+		ginkgo.Skip(plugin.AttachOutOfScopeReason)
+	}
 	if ctx == nil {
 		return
 	}
@@ -183,6 +199,7 @@ func endSpec(report ginkgo.SpecReport) {
 	mu.Lock()
 	ctx, startedAt := current, started
 	current = nil
+	attachSkipID = 0
 	mu.Unlock()
 
 	defer plugin.ClearProcessContext()

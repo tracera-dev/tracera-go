@@ -2,17 +2,17 @@
 
 Tracera Autotest adapter for Godog.
 
-**Requires Go ≥ 1.25 and Godog ≥ 0.16.**
+**Tested on Go 1.25–1.27 and Godog 0.16.**
 
 ```bash
-go get github.com/tracera-dev/tracera-go/godog
+go get github.com/tracera-dev/tracera-go/godog/v2
 ```
 
 Register the suite and wrap the scenario initializer so stock After hooks still
 land on Teardown (Godog runs After hooks in registration order):
 
 ```go
-import traceragodog "github.com/tracera-dev/tracera-go/godog"
+import traceragodog "github.com/tracera-dev/tracera-go/godog/v2"
 
 suite := godog.TestSuite{
     TestSuiteInitializer: traceragodog.RegisterSuite,
@@ -67,7 +67,7 @@ Prefer `Initialize` so your After hooks run before Tracera closes the result. Th
 
 ## Comments, errors, and attachments
 
-`tracera.Comment`, `tracera.Error`, and the attachment helpers attach to the open Gherkin step, or to the result when none is open. Shared placement and `tracera.error` rules: https://tracera.dev/docs/adapters.
+`tracera.Comment`, `tracera.Error`, and the attachment helpers attach to the open Gherkin step, or to the result when none is open. Shared placement and `tracera.error` rules: [Autotest adapters](https://tracera.dev/docs/adapters#comments-errors-and-attachments).
 
 Attach a file with `tracera.AttachmentFile` or bytes with `tracera.AttachmentBytes` — they upload when the result is reported. MIME type is optional. Up to ten attachments on a step and ten on the result. Prefer those helpers over `tracera.Attachment` with a pre-uploaded id.
 
@@ -84,4 +84,4 @@ Running Scenarios in parallel (`godog.Options.Concurrency`) needs no extra setup
 
 Scenario Outlines expand natively — the `<column>` placeholders already appear in the Scenario name and the step text, so no Tracera name template is needed. Each Example row reports its own result under the Outline's `@tracera.id:` tag.
 
-Environment variables, run modes and `.env` lookup: [Autotest adapters](https://tracera.dev/docs/adapters).
+Environment variables, run modes and `.env` lookup: [Autotest adapters](https://tracera.dev/docs/adapters#environment).

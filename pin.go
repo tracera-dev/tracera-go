@@ -3,7 +3,7 @@ package tracera
 import (
 	"sync"
 
-	"github.com/tracera-dev/tracera-go/internal/core"
+	"github.com/tracera-dev/tracera-go/v2/internal/core"
 )
 
 // TestContext is the opaque customer pin — bind, section, and result fields

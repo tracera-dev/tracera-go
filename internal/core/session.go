@@ -79,6 +79,7 @@ func BeginReporting(state *ReporterState) {
 	}
 
 	testRunID := config.TestRunID
+	envAttach := testRunID > 0
 	owned := false
 	peerHandoff := false
 	switch {
@@ -103,6 +104,24 @@ func BeginReporting(state *ReporterState) {
 		owned = true
 	}
 
+	if envAttach {
+		scope, err := client.FetchAttachScope(testRunID)
+		if err != nil {
+			LogWarn("Tracera: attach-scope GET failed: %v — not filtering", err)
+			SetAttachFilter(nil)
+		} else {
+			SetAttachFilter(scope)
+			if scope != nil {
+				LogDebug(
+					"Tracera: attach-scope loaded (%d roots)",
+					len(scope.RootTestCaseIDs),
+				)
+			}
+		}
+	} else {
+		SetAttachFilter(nil)
+	}
+
 	state.session = NewSession(client, config, testRunID, owned, peerHandoff)
 	state.session.PeerFinisher = peerHandoff && state.PeerFinisher
 	state.buffer = NewResultBuffer(state.session)
@@ -125,13 +144,10 @@ func EnqueueResult(state *ReporterState, item *PendingResult) {
 		payload := SnapshotPayload(item.Ctx)
 		item.Payload = &payload
 	}
-	if item.Ctx.TestCaseID() <= 0 {
-		// Visible only at debug (PRODUCT / adapters Callout).
-		label := strings.TrimSpace(item.Ctx.AutotestName())
-		if label == "" {
-			label = "unbound"
+	if !ShouldReport(item.Ctx.TestCaseID(), item.Ctx.AutotestName()) {
+		if item.Ctx.TestCaseID() > 0 {
+			LogAttachSkipReport(item.Ctx.TestCaseID(), item.Ctx.AutotestName())
 		}
-		LogDebug("Tracera: skip report — no testCaseId (%s)", label)
 		DiscardPendingBlobs(item.Payload)
 		return
 	}
