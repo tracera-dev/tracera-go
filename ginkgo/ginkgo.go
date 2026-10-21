@@ -219,7 +219,7 @@ func endSpec(report ginkgo.SpecReport) {
 			payload = plugin.SnapshotPayload(ctx)
 		}
 	default:
-		if plugin.PayloadHasFailedStep(payload) || ctx.ResultError() != "" {
+		if plugin.PayloadHasFailedStep(payload) || ctx.HasResultFailure() {
 			status = "Failed"
 		}
 	}

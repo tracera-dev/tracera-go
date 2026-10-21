@@ -333,7 +333,7 @@ func endScenario(scenario *godog.Scenario, scenarioErr error) {
 			plugin.RecordFailure(ctx, failureOf(scenarioErr))
 			payload = plugin.SnapshotPayload(ctx)
 		}
-	case plugin.PayloadHasFailedStep(payload) || ctx.ResultError() != "":
+	case plugin.PayloadHasFailedStep(payload) || ctx.HasResultFailure():
 		status = "Failed"
 	}
 

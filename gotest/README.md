@@ -81,7 +81,7 @@ tracera.Step("charge the card", func() {
 
 `tracera.Attachment` accepts an already-uploaded blob id — use it only when you hold a Tracera attachment id.
 
-A panic inside a step records the message and the captured stack on that step; a `t.Fatalf` (or `require.*` failure) inside a step marks that step Failed too. The `testing` package keeps `t.Errorf` / `t.Fatalf` text to itself, so a test that fails that way reports the test name plus the source locations Tracera can still resolve — pass the message yourself when you want it on the card:
+A panic inside a step marks that step **Failed**, records the message and the stack on it, and marks the result **Failed**. `t.Fatal` / `t.FailNow` / `require` inside the step mark that step and the result **Failed**. Their assertion text is not written on the step. `t.Error` / `t.Errorf` mark the result **Failed**. The assertion text stays in the `go test` output. Call `tracera.Error` to put a message on the card:
 
 ```go
 if err != nil {

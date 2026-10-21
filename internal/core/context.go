@@ -68,6 +68,8 @@ type TestContext struct {
 	nextStepID        int
 	// Sticky: any step marked Failed (O(1) for PayloadHasFailedStep on Passed).
 	hasFailedStep bool
+	// Sticky: RecordFailure wrote result-level text. Soft Error does not set this.
+	hasResultFailure bool
 	// Sticky: any step with non-empty errorMessage (O(1) fail-text XOR; soft error ≠ Failed).
 	hasStepError bool
 }
@@ -138,6 +140,17 @@ func (c *TestContext) ResultError() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.resultError
+}
+
+// HasResultFailure reports whether RecordFailure wrote result-level text.
+// Soft Error fills ResultError without setting this flag.
+func (c *TestContext) HasResultFailure() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.hasResultFailure
 }
 
 var ctxStore sync.Map // goroutine id -> *TestContext
@@ -612,6 +625,7 @@ func RecordFailure(ctx *TestContext, err any) {
 		return
 	}
 	ctx.resultError = AppendText(ctx.resultError, msg)
+	ctx.hasResultFailure = true
 }
 
 // RecordSkip stores the skip reason as a result comment (never an error).
@@ -669,6 +683,7 @@ func (c *TestContext) clearStepTreesLocked() {
 	c.stepStack = nil
 	c.roots = map[StepSection][]*stepNode{SectionSetup: nil, SectionTest: nil, SectionTeardown: nil}
 	c.hasFailedStep = false
+	c.hasResultFailure = false
 	c.hasStepError = false
 }
 

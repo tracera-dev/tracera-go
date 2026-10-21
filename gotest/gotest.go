@@ -240,7 +240,7 @@ func report(t *testing.T, state *testState) {
 		status = "Skipped"
 	case t.Failed():
 		status = "Failed"
-	case plugin.PayloadHasFailedStep(payload) || ctx.ResultError() != "":
+	case plugin.PayloadHasFailedStep(payload) || ctx.HasResultFailure():
 		status = "Failed"
 	}
 
